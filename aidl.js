@@ -5,8 +5,6 @@ function log(x) { document.write(JSON.stringify(x,null,4)+'\n'); }
 
 
 
-
-
 // Whole AiDL
 
 var l = {};
@@ -549,14 +547,15 @@ l.getSlot = function(host,slotName) {
 
 // Javascript Prototype: execution context
 
-l.execution = function (host,funcSlot) {
+l.execution = function (host,parsedSource,caller,callId) {
+	
+	this.caller = caller;
+	
+	this.callId = callId;
 	
 	this.host = host;
-	this.funcSlot = funcSlot;
-	
-	this.functionObject = l.mem[host]["slot:"+funcSlot].content;
-	
-	this.parsedSource = l.mem[this.functionObject]["slot:value"].parsedSource;
+
+	this.parsedSource = parsedSource;
 	
 	this.receiver = host;
 	
@@ -565,76 +564,140 @@ l.execution = function (host,funcSlot) {
 	this.currentCodepart = [];
 	
 	this.currentItem = [];
+	
+	this.mode = "waiting for item";
+	
+	this.mailbox = {};
+	this.called = {};
 };
 
 
 
 l.execution.prototype.step = function() {
 	
-	var outcome = { state: "nothing yet" };
 
-	while ((outcome.state != "source is empty")
-		&& (outcome.state != "new item is available")) {
-
-		outcome = this.getNextItem();
+	switch (this.mode) {
+		
+		case "waiting for item":
+		
+			this.mode = this.getNextItem();
+			return this.mode;
+			
+		case "source is empty":
+		
+			this.mode = "done";
+			return this.mode;
+			
+		case "new item is available":
+		
+			this.mode = this.treatAnyItem();
+			return this.mode;
+			
+		case "prototype not found":
+		
+			this.mode = "interrupted";
+			return this.mode;
 	}
 	
-	if (outcome.state == "source is empty") return { state: "execution success" };
+	return this.mode;
+}
+
+
+
+l.execution.prototype.treatAnyItem = function() {
+	
+	var mode;
 	
 	switch (this.currentItem.type) {
 		
 		case "RawString":
 		case "CurlyBraces":
-			outcome = this.treatConstant();
+			mode = this.treatConstant(this.currentItem.content);
 			break;
 		
 		case "SingleQuoteString":
 		case "DoubleQuoteString":
 		case "Parentheses":
-			outcome = this.treatModifyable();
+			mode = this.treatModifiable();
 			break;
 			
 		case "SquareBrackets":
-			outcome = this.treatEmbedded();
+			mode = this.treatEmbedded();
 			break;
 			
 		Default:
 			alert("Warning: currentItem type error - "+this.currentItem.type);
 	}
 	
-	return outcome;
+	return mode;
 }
 
 
 
-l.execution.prototype.treatConstant = function() {
+l.execution.prototype.treatConstant = function(target) {
 	
-	var lookup = this.lookup(this.receiver,this.currentItem.content);
+	var lookup = this.lookup(this.receiver,target);
 	
 	if (lookup.outcome == "success") {
 		
 		this.receiver = lookup.found;
-		return { state: "running" };
+		return "waiting for item";
 		
 	} else {
 
-		// here, we should raise an exception
-		return { state: "running" };
+		return "prototype not found";
 	}
 }
 
 
 
-l.execution.prototype.treatModifyable = function() { // we'll need a different parser here
+l.execution.prototype.treatModifiable = function() {
 	
-	return { state: "running" };
+	var total = '';
+	var everythingIsFlat = true;
+	
+	for (var i=0; i<this.currentItem.content.length; i++) {
+		
+		if (this.currentItem.content[i].flat) {
+			
+			total += this.currentItem.content[i].content;
+			
+		} else { // it's an embedded
+		
+			if (this.called[i]) { // did we call it already?
+			
+				if (this.mailbox[i]) { // do we have it in mailbox?
+					
+					this.currentItem.content[i].flat = true;
+					this.currentItem.content[i].content =
+						this.mailbox[i];
+						
+					total += this.currentItem.content[i].content;
+					
+				} else { // we don't have a return value yet
+				
+					everythingIsFlat = false;
+					
+				}
+				
+			} else { // didn't call yet, let's call
+			
+				this.called[i] = true;
+				
+				l.engine.newExe(this.host,this.currentItem.content[i],this,i);
+			}
+		}
+	}
+	
+	if (everythingIsFlat) return this.treatConstant(total);
+	else return "waiting for return";
 }
 
 
 
 l.execution.prototype.treatEmbedded = function() {
 	
-	return { state: "running" };
+	return "waiting for item";
 }
 
 
@@ -646,23 +709,23 @@ l.execution.prototype.getNextItem = function() {
 		if (this.currentCodeline.length == 0) { // get the next code line
 
 			if (this.parsedSource.length == 0)
-				return { state: "source is empty" };
+				return "source is empty";
 		
 			this.currentCodeline = this.parsedSource.shift().part;
 			
 			this.receiver = this.host;
 			
-			return { state: "new code line is available" };
+			return "waiting for item";
 		}
 	
 		this.currentCodepart = this.currentCodeline.shift().item;
 		
-		return { state: "new code part is available" };
+		return "waiting for item";
 	}
 	
 	this.currentItem = this.currentCodepart.shift();
 	
-	return { state: "new item is available" };
+	return "new item is available";
 }
 
 
@@ -696,18 +759,55 @@ l.execution.prototype.lookup = function(receiver,slotName) {
 					result = { outcome: "running" };
 			}
 			
+			if (result.outcome = "prototype not found") return "prototype not found";
 			return result;
 		}
 		
-		return { outcome: "no prototype found" };
+		return { outcome: "prototype not found" };
 	}
 }
 
 
 
+// Main AiDL engine
+
+l.engine = {
+
+	exe: [],
+
+	newExe: function(host,parsedSource,caller,callId) {
+		
+		l.engine.exe.push(new l.execution(host,parsedSource,caller));
+	},
+
+	currentExe: 0,
+
+	step: function() {
+		
+		this.exe[this.currentExe].step();
+		
+		this.currentExe++;
+		
+		if (this.currentExe == this.exe.length)
+			this.currentExe = 0;
+	},
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
 var source = new l.Aidlfunc(`
 
-	maxy {mother} description;
+	maxy {mother} descruption;
 `);
 
 
@@ -750,14 +850,16 @@ l.setSlot("#1","MAINSOURCE",source);
 
 
 
+/*
 
+var exe = new l.execution("#1",l.getSlot("#1","MAINSOURCE"));
 
-var exe = new l.execution("#1","MAINSOURCE");
-
-while (exe.step().state != "execution success")
-	log(l.mem[exe.receiver]["slot:label"].content);
-
-
+while (exe.mode != "done" && exe.mode != "interrupted") {
+	exe.step();
+	//log(l.mem[exe.receiver]["slot:label"].content);
+	log(exe.mode);
+}
+*/
 
 
 log(l.mem);
