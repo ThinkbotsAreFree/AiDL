@@ -1,0 +1,226 @@
+
+{
+
+
+	var flatten = function(element) {
+
+		var part = [];
+
+		for (var i=0; i<element.length; i++) {
+
+			if (element[i].inner) {
+
+				part = part.concat(flatten(element[i].content));
+
+			} else {
+
+				part.push(element[i]);
+
+			}
+		}
+		part[0].content = '('+part[0].content;
+		part[part.length-1].content = part[part.length-1].content+')';
+
+		var result = [];
+		var lastWasFlat = false;
+
+		for (var i=0; i<element.length; i++) {
+
+			if (lastWasFlat && part[i].flat)
+				result[result.length-1].content += part[i].content;
+			else
+				result.push(part[i]);
+			lastWasFlat = part[i].flat;
+		}
+
+		return result;
+	}
+
+}
+
+
+Program
+= _ c:Command n:NextCommand* _ ";"? _ {
+
+    var result = [c].concat(n);
+
+    if (result[result.length-1].part[0].item.length==0) result.pop();
+
+    return result;
+}
+
+
+Command "Command"
+= s:Source n:NextSource* {
+	return { part: [s].concat(n) };
+}
+
+
+NextCommand "NextCommand"
+= _ ";" _ c:Command { return c; }
+
+
+NextSource "NextSource"
+= "," s:Source { return s; }
+
+
+Source "Source"
+= sp:SourcePart* { return { item: sp }; }
+
+
+SourcePart "SourcePart"
+= _ c:Content _ { return c; }
+
+
+Content "Content"
+= RawString
+/ DoubleQuoteString
+/ SingleQuoteString
+/ Parentheses
+/ SquareBrackets
+/ CurlyBraces
+
+
+RawString "RawString"
+= c:RawStringChar+ {
+
+	return {
+    	type: "RawString",
+        content: c.join('')
+    };
+}
+
+
+RawStringChar "RawStringChar"
+= !WhiteSpace ![\"\'\(\)\[\]\{\}\;\,] c:. { return c; }
+
+
+DoubleQuoteString "DoubleQuoteString"
+= '"' p:DoubleQuoteStringPart* '"' {
+
+	return {
+    	type: "DoubleQuoteString",
+        content: p
+    };
+}
+
+
+DoubleQuoteStringPart
+= c:DoubleQuoteStringChar+ { return { flat: true, content: c.join('') }; }
+/ InnerSquareBrackets
+
+
+DoubleQuoteStringChar "DoubleQuoteStringChar"
+= [^\\\"\[\]]
+/ "\\" c:. { return c; }
+
+
+SingleQuoteString "SingleQuoteString"
+= "'" p:SingleQuoteStringPart* "'" {
+
+	return {
+    	type: "SingleQuoteString",
+        content: p
+    };
+}
+
+
+SingleQuoteStringPart
+= c:SingleQuoteStringChar+ { return { flat: true, content: c.join('') }; }
+/ InnerSquareBrackets
+
+
+SingleQuoteStringChar "SingleQuoteStringChar"
+= [^\\\'\[\]]
+/ "\\" c:. { return c; }
+
+
+SquareBrackets "SquareBrackets"
+= "[" p:Program "]" {
+
+	return {
+    	type: "SquareBrackets",
+        content: p
+    };
+}
+
+
+Parentheses "Parentheses"
+= "(" p:ParenthesesPart* ")" {
+
+	return {
+    	type: "Parentheses",
+        content: flatten(p)
+    };
+}
+
+
+ParenthesesPart "ParenthesesPart"
+= ParenthesesContent
+/ InnerParentheses
+/ InnerSquareBrackets
+
+
+ParenthesesContent "ParenthesesContent"
+= c:ParenthesesChar+ { return { flat: true, content: c.join('') }; }
+
+
+InnerParentheses "InnerParentheses"
+= "(" p:ParenthesesPart* ")" { return { inner: true, content: p }; }
+
+
+ParenthesesChar "ParenthesesChar"
+= [^\\\(\)\[\]]
+/ "\\" c:. { return c; }
+
+
+CurlyBraces "CurlyBraces"
+= "{" p:CurlyBracesPart* "}" {
+
+	return {
+    	type: "CurlyBraces",
+        content: p.join('')
+    };
+}
+
+
+CurlyBracesPart "CurlyBracesPart"
+= CurlyBracesContent
+/ InnerCurlyBraces
+
+
+CurlyBracesContent "CurlyBracesContent"
+= c:CurlyBracesChar+ { return c.join(''); }
+
+
+InnerCurlyBraces "InnerCurlyBraces"
+= "{" p:CurlyBracesPart* "}" { return "{"+p.join('')+"}"; }
+
+
+CurlyBracesChar "CurlyBracesChar"
+= [^\\\{\}]
+/ "\\" c:. { return c; }
+
+
+InnerSquareBrackets
+= "[" p:$Program "]" {
+
+	return { embedded: true, content: p };
+}
+
+
+_ = WhiteSpace*
+
+
+__ = WhiteSpace+
+
+
+WhiteSpace "whitespace"
+  = "\t"
+  / "\v"
+  / "\f"
+  / " "
+  / "\u00A0"
+  / "\uFEFF"
+  / [\u0020\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]
+  / [\n\r\u2028\u2029]
