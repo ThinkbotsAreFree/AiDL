@@ -347,6 +347,35 @@ l.updateMem = function(id,newData,label,proto) {
 
 
 
+// Duplicate recursively a value in a memory location
+
+l.duplicateMem = function(id) {
+	
+	if (!l.mem[id]) return;
+	
+	var where = l.newId();
+	
+	l.mem[where] = JSON.parse(JSON.stringify(l.mem[id]));
+	
+	var keys = Object.keys(l.mem[where]);
+	
+	for (var k=0; k<keys.length; k++) {
+		
+		if (l.mem[where][keys[k]].type == "Reference")
+			l.mem[where][keys[k]].content =
+				l.duplicateMem(l.mem[where][keys[k]].content);
+				
+		if (l.mem[where][keys[k]].type == "List")
+			for (var l=0; l<l.mem[where][keys[k]].content.length; l++)
+				l.mem[where][keys[k]].content[l] =
+					l.duplicateMem(l.mem[where][keys[k]].content[l]);
+	}
+	
+	return where;
+}
+
+
+
 // Base references
 
 l.ref_Space     = "#1";
@@ -569,9 +598,13 @@ l.execution = function (host,parsedSource,caller,callId) {
 	
 	this.mailbox = {};
 	this.called = {};
+	
+	this.returnValue = l.nothing;
 };
 
 
+
+// One step beyoooond
 
 l.execution.prototype.step = function() {
 	
@@ -585,6 +618,7 @@ l.execution.prototype.step = function() {
 			
 		case "source is empty":
 		
+			this.sendReturn();
 			this.mode = "done";
 			return this.mode;
 			
@@ -602,6 +636,12 @@ l.execution.prototype.step = function() {
 	return this.mode;
 }
 
+
+
+l.execution.prototype.sendReturn = function() {
+	
+	l.engine.exe[this.caller][this.callId] = this.returnValue;
+}
 
 
 l.execution.prototype.treatAnyItem = function() {
@@ -863,9 +903,6 @@ while (exe.mode != "done" && exe.mode != "interrupted") {
 
 
 log(l.mem);
-
-
-
 
 
 
